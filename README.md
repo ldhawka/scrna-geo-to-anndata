@@ -26,6 +26,23 @@ pip install -r requirements.txt
 
 ### Basic Usage
 
+#### Import Options
+
+If you haven't installed the package, you'll need to add the repository to your Python path:
+
+```python
+import sys
+sys.path.append('/path/to/scrna-geo-to-anndata')  # Replace with your actual path
+from anndata_compiler import GEOAnndataCompiler, create_config_template
+```
+
+Alternatively, install the package in development mode:
+```bash
+cd /path/to/scrna-geo-to-anndata
+pip install -e .
+```
+
+Then you can import directly:
 ```python
 from anndata_compiler import GEOAnndataCompiler, create_config_template
 
@@ -80,6 +97,10 @@ The tool expects metadata in CSV or Excel format with sample information. Here's
 | `delimiter` | File delimiter ('whitespace' or character) | 'whitespace' |
 | `random_state` | Random seed for reproducibility | 42 |
 | `optimize_params` | Auto-optimize PCA/clustering parameters | False |
+| `data_format` | Data format: 'auto', 'simple', 'with_cell_metadata' | 'auto' |
+| `counts_pattern` | Glob pattern for count files (e.g., '*_counts.csv.gz') | None |
+| `cell_metadata_pattern` | Glob pattern for cell metadata files | None |
+| `metadata_columns` | List of metadata columns to include (None = all) | None |
 
 ## Pipeline Steps
 
@@ -92,6 +113,51 @@ The tool expects metadata in CSV or Excel format with sample information. Here's
 7. **Dimensionality Reduction**: PCA with optional parameter optimization
 8. **Clustering**: Leiden clustering and UMAP visualization
 9. **Output**: Save processed data and generate plots
+
+## Data Format Examples
+
+### Simple Format (Traditional GEO)
+Single expression file per sample:
+```python
+config = {
+    'raw_data_dir': './GSE123456_RAW',
+    'metadata_file': './metadata.csv',
+    'output_file': './compiled_data.h5ad',
+    'sample_id_column': 'Sample_ID',
+    'data_format': 'simple'  # Optional, will auto-detect
+}
+```
+
+### With Cell Metadata 
+Paired count and cell metadata files per sample:
+```python
+config = {
+    'raw_data_dir': './GSE225948_RAW',
+    'metadata_file': './sample_metadata.csv',  # Sample-level metadata
+    'output_file': './compiled_with_cells.h5ad',
+    'sample_id_column': 'Sample_ID',
+    'data_format': 'with_cell_metadata',  # Optional, will auto-detect
+    'counts_pattern': '*_counts.csv.gz',  # Optional, will auto-detect
+    'cell_metadata_pattern': '*_metadata.csv.gz',  # Optional, will auto-detect
+    'delimiter': ','  # CSV format
+}
+```
+
+The tool will automatically detect which format your data uses and process accordingly. Cell-level metadata (cell types, QC metrics) will be preserved in the final AnnData object.
+
+### Selective Metadata Columns
+Choose specific columns from your metadata file to include:
+```python
+config = {
+    'raw_data_dir': './GSE225948_RAW',
+    'metadata_file': './metadata.csv',
+    'output_file': './compiled_selective.h5ad',
+    'sample_id_column': 'Sample_ID',
+    'metadata_columns': ['Sex', 'Age', 'Disease_state'],  # Only include these columns
+    'delimiter': ','
+}
+```
+This helps keep your AnnData object smaller by excluding unnecessary metadata columns.
 
 ## Advanced Features
 
@@ -122,15 +188,22 @@ For large datasets, the tool includes:
 
 ## Requirements
 
-- Python ≥ 3.8
+- Python ≥ 3.11
 - pandas ≥ 2.3.0
 - numpy ≥ 1.23.0  
 - anndata ≥ 0.11.0
 - scanpy ≥ 1.11.0
 - scikit-learn ≥ 1.7.0
 - matplotlib ≥ 3.10.0
+- seaborn ≥ 0.12.0
+- leidenalg ≥ 0.10.0 (for Leiden clustering)
+- igraph ≥ 0.11.0 (for network analysis)
 - tqdm ≥ 4.66.0
 - openpyxl ≥ 3.0.9
+
+For running examples:
+- jupyter ≥ 1.0.0
+- ipykernel ≥ 6.0.0
 
 ## Development
 

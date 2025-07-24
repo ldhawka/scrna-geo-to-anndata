@@ -1,0 +1,4 @@
+﻿Sample_name,Sample_geo_accession,Source,Organism,Disease_state,!Sample_extract_protocol_ch1,Sample_ID
+ALS_3,GSM7810083,PBMC,Homo sapiens, Non-rapid ALS,A single-cell RNA-seq library was prepared from PBMC using Chromium Single Cell 3' Library Kit v2 (10x Genomics) following the manufacturer‚Äôs instructions.,GSM7810083
+ALS_6,GSM7810084,PBMC,Homo sapiens, Non-rapid ALS,A single-cell RNA-seq library was prepared from PBMC using Chromium Single Cell 3' Library Kit v2 (10x Genomics) following the manufacturer‚Äôs instructions.,GSM7810084
+C_1,GSM7810113,PBMC,Homo sapiens, Control,A single-cell RNA-seq library was prepared from PBMC using Chromium Single Cell 3' Library Kit v2 (10x Genomics) following the manufacturer‚Äôs instructions.,GSM7810113

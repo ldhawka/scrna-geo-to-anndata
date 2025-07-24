@@ -43,6 +43,12 @@ class GEOAnndataCompiler:
         self.config.setdefault('random_state', 42)
         self.config.setdefault('optimize_params', False)
         
+        # New parameters for flexible data handling
+        self.config.setdefault('data_format', 'auto')  # 'auto', 'simple', 'with_cell_metadata'
+        self.config.setdefault('counts_pattern', None)  # e.g., '*_counts.csv.gz'
+        self.config.setdefault('cell_metadata_pattern', None)  # e.g., '*_metadata.csv.gz'
+        self.config.setdefault('metadata_columns', None)  # List of columns to include, None means all
+        
         # Set random seeds
         random.seed(self.config['random_state'])
         np.random.seed(self.config['random_state'])
@@ -61,6 +67,34 @@ class GEOAnndataCompiler:
         print(f"Loaded metadata with {len(self.metadata_df)} rows")
         return self.metadata_df
     
+    def detect_data_format(self):
+        """Auto-detect if we have cell metadata files"""
+        files = listdir(self.config['raw_data_dir'])
+        
+        # Check for common patterns
+        has_counts = any('_counts' in f or '_expression' in f for f in files)
+        has_cell_metadata = any('_metadata' in f or '_barcodes' in f for f in files)
+        
+        if has_counts and has_cell_metadata:
+            print("Detected data format: with_cell_metadata")
+            # Try to auto-detect patterns
+            if not self.config['counts_pattern']:
+                if any('_counts.csv' in f for f in files):
+                    self.config['counts_pattern'] = '*_counts.csv*'
+                elif any('_expression' in f for f in files):
+                    self.config['counts_pattern'] = '*_expression*'
+            
+            if not self.config['cell_metadata_pattern']:
+                if any('_metadata.csv' in f for f in files):
+                    self.config['cell_metadata_pattern'] = '*_metadata.csv*'
+                elif any('_barcodes' in f for f in files):
+                    self.config['cell_metadata_pattern'] = '*_barcodes*'
+            
+            return 'with_cell_metadata'
+        else:
+            print("Detected data format: simple")
+            return 'simple'
+    
     def extract_sample_id(self, filename):
         """Extract sample ID from filename. Override this method for custom extraction."""
         return filename.split('_')[0]
@@ -73,7 +107,16 @@ class GEOAnndataCompiler:
         if matching_rows.empty:
             return None
         
-        return matching_rows.iloc[0].to_dict()
+        # Get all metadata for this sample
+        metadata_dict = matching_rows.iloc[0].to_dict()
+        
+        # Filter columns if specified
+        if self.config['metadata_columns'] is not None:
+            # Always include sample_id_column
+            columns_to_keep = set(self.config['metadata_columns']) | {sample_id_col}
+            metadata_dict = {k: v for k, v in metadata_dict.items() if k in columns_to_keep}
+        
+        return metadata_dict
     
     def process_sample_file(self, filepath):
         """Process a single sample file into AnnData format."""
@@ -103,6 +146,61 @@ class GEOAnndataCompiler:
         
         return adata
     
+    def load_cell_metadata_file(self, filepath):
+        """Load cell metadata from file"""
+        if self.config['delimiter'] == 'whitespace':
+            cell_meta = pd.read_csv(filepath, sep='\s+', index_col=0)
+        else:
+            cell_meta = pd.read_csv(filepath, delimiter=self.config['delimiter'], index_col=0)
+        return cell_meta
+    
+    def load_counts_file(self, filepath):
+        """Load counts matrix from file"""
+        if self.config['delimiter'] == 'whitespace':
+            counts = pd.read_csv(filepath, sep='\s+', index_col=0)
+        else:
+            counts = pd.read_csv(filepath, delimiter=self.config['delimiter'], index_col=0)
+        return counts
+    
+    def process_sample_with_cell_metadata(self, sample_id, counts_file, metadata_file):
+        """Process a sample that has both counts and cell metadata files"""
+        # Load counts matrix
+        counts_path = os.path.join(self.config['raw_data_dir'], counts_file)
+        counts = self.load_counts_file(counts_path)
+        
+        # Load cell metadata
+        metadata_path = os.path.join(self.config['raw_data_dir'], metadata_file)
+        cell_metadata = self.load_cell_metadata_file(metadata_path)
+        
+        # Create AnnData object with counts (genes x cells)
+        adata = anndata.AnnData(X=counts.T)  # Transpose if needed (cells x genes)
+        
+        # Add cell metadata
+        # Match cell barcodes between counts and metadata
+        common_cells = adata.obs.index.intersection(cell_metadata.index)
+        if len(common_cells) < len(adata.obs.index):
+            print(f"Warning: Only {len(common_cells)}/{len(adata.obs.index)} cells have metadata")
+        
+        # Add cell metadata columns
+        for col in cell_metadata.columns:
+            adata.obs[col] = cell_metadata.loc[adata.obs.index, col] if col in cell_metadata.columns else np.nan
+        
+        # Add sample ID
+        adata.obs['sample_id'] = sample_id
+        
+        # Add sample-level metadata
+        sample_metadata = self.get_sample_metadata(sample_id)
+        if sample_metadata:
+            for key, value in sample_metadata.items():
+                adata.obs[key] = value
+        
+        # Subsample if needed
+        if adata.n_obs > self.config['max_cells_per_sample']:
+            indices = np.random.choice(adata.n_obs, self.config['max_cells_per_sample'], replace=False)
+            adata = adata[indices]
+        
+        return adata
+    
     def process_all_samples(self):
         """Process all samples in the raw data directory."""
         raw_dir = self.config['raw_data_dir']
@@ -113,35 +211,85 @@ class GEOAnndataCompiler:
         # Load metadata
         self.load_metadata()
         
+        # Auto-detect data format if needed
+        if self.config['data_format'] == 'auto':
+            self.config['data_format'] = self.detect_data_format()
+        
         # Get all files
         file_names = listdir(raw_dir)
-        print(f"Found {len(file_names)} files to process")
+        print(f"Found {len(file_names)} files in directory")
         
         processed_count = 0
         
-        for filename in tqdm(file_names, desc="Processing samples"):
-            try:
-                # Extract sample ID
-                sample_id = self.extract_sample_id(filename)
-                
-                # Get metadata
-                metadata = self.get_sample_metadata(sample_id)
-                if metadata is None:
-                    print(f"No metadata found for sample: {sample_id}")
+        if self.config['data_format'] == 'with_cell_metadata':
+            # Process files with cell metadata
+            import glob
+            
+            # Get counts files
+            counts_pattern = self.config['counts_pattern'] or '*_counts*'
+            counts_files = glob.glob(os.path.join(raw_dir, counts_pattern))
+            print(f"Found {len(counts_files)} count files matching pattern: {counts_pattern}")
+            
+            for counts_file in tqdm(counts_files, desc="Processing samples"):
+                try:
+                    # Extract sample ID
+                    basename = os.path.basename(counts_file)
+                    sample_id = self.extract_sample_id(basename)
+                    
+                    # Find corresponding metadata file
+                    # Replace counts with metadata in filename
+                    expected_meta = basename.replace('_counts', '_metadata')
+                    metadata_file = expected_meta if expected_meta in file_names else None
+                    
+                    if not metadata_file:
+                        # Try to find metadata file with glob
+                        meta_files = glob.glob(os.path.join(raw_dir, f"*{sample_id}*metadata*"))
+                        if meta_files:
+                            metadata_file = os.path.basename(meta_files[0])
+                    
+                    if metadata_file and os.path.exists(os.path.join(raw_dir, metadata_file)):
+                        adata = self.process_sample_with_cell_metadata(sample_id, basename, metadata_file)
+                        self.adata_list.append(adata)
+                        processed_count += 1
+                    else:
+                        print(f"Warning: No cell metadata file found for {sample_id}, processing as simple format")
+                        # Fall back to simple processing
+                        metadata = self.get_sample_metadata(sample_id)
+                        if metadata:
+                            data = self.process_sample_file(counts_file)
+                            adata = self.create_anndata(data, metadata)
+                            self.adata_list.append(adata)
+                            processed_count += 1
+                        
+                except Exception as e:
+                    print(f"Error processing {counts_file}: {str(e)}")
                     continue
-                
-                # Process file
-                filepath = os.path.join(raw_dir, filename)
-                data = self.process_sample_file(filepath)
-                
-                # Create AnnData
-                adata = self.create_anndata(data, metadata)
-                self.adata_list.append(adata)
-                processed_count += 1
-                
-            except Exception as e:
-                print(f"Error processing {filename}: {str(e)}")
-                continue
+        
+        else:
+            # Original simple format processing
+            for filename in tqdm(file_names, desc="Processing samples"):
+                try:
+                    # Extract sample ID
+                    sample_id = self.extract_sample_id(filename)
+                    
+                    # Get metadata
+                    metadata = self.get_sample_metadata(sample_id)
+                    if metadata is None:
+                        print(f"No metadata found for sample: {sample_id}")
+                        continue
+                    
+                    # Process file
+                    filepath = os.path.join(raw_dir, filename)
+                    data = self.process_sample_file(filepath)
+                    
+                    # Create AnnData
+                    adata = self.create_anndata(data, metadata)
+                    self.adata_list.append(adata)
+                    processed_count += 1
+                    
+                except Exception as e:
+                    print(f"Error processing {filename}: {str(e)}")
+                    continue
         
         print(f"Successfully processed {processed_count} samples")
         return self.adata_list

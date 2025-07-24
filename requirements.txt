@@ -1,8 +1,26 @@
+# Core data processing
 anndata>=0.11.0
-matplotlib>=3.10.0
-numpy>=1.23.0
 pandas>=2.3.0
+numpy>=1.23.0
+
+# Single-cell analysis
 scanpy>=1.11.0
+
+# Machine learning
 scikit-learn>=1.7.0
+
+# Visualization
+matplotlib>=3.10.0
+seaborn>=0.12.0
+
+# Network analysis (for Leiden clustering)
+leidenalg>=0.10.0
+igraph>=0.11.0
+
+# Utilities
 tqdm>=4.66.0
 openpyxl>=3.0.9
+
+# Jupyter notebook dependencies (optional)
+jupyter>=1.0.0
+ipykernel>=6.0.0

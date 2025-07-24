@@ -1,0 +1,4 @@
+Sample_ID,Tissue,Condition,Age_Group,Sex,Dataset
+GSM7060815,Brain,Stroke,Adult,M,GSE225948
+GSM7060816,Brain,Stroke,Adult,F,GSE225948
+GSM7060833,Blood,Stroke,Adult,M,GSE225948
