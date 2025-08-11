@@ -211,4 +211,4 @@ MIT License - see LICENSE file for details.
 
 ## Contributing
 
-Issues, pull requests and Feedback welcome! 
+Issues, pull requests and feedback welcome! 
