@@ -205,14 +205,10 @@ For running examples:
 - jupyter ≥ 1.0.0
 - ipykernel ≥ 6.0.0
 
-## Development
-
-This tool was developed using Claude, combining domain expertise in computational biology with collaborative development to ensure robust, well-documented code following bioinformatics best practices.
-
 ## License
 
 MIT License - see LICENSE file for details.
 
 ## Contributing
 
-Issues and pull requests welcome! Feedback from the computational biology community is appreciated.
+Issues, pull requests and Feedback welcome! 
