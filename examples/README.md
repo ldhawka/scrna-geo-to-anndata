@@ -11,7 +11,7 @@ This directory contains example datasets and Jupyter notebooks demonstrating how
 - **Files**: `GSM*.txt.gz` + `metadata.csv`
 - **Samples**: 2 ALS patients, 1 control
 
-### 2. With Cell Metadata - Stroke Dataset  
+### 2. With Cell Metadata - Stroke Dataset
 - **Location**: `data/with_cell_metadata_stroke/`
 - **Source**: GSE225948 (subset of 3 samples)
 - **Format**: Modern GEO format with paired count and cell metadata files
@@ -21,18 +21,19 @@ This directory contains example datasets and Jupyter notebooks demonstrating how
 ## Jupyter Notebooks
 
 ### `01_simple_format_ALS_example.ipynb`
-Demonstrates processing traditional GEO datasets:
+Demonstrates compiling traditional GEO datasets:
 - Single expression file per sample
 - Sample-level metadata integration
-- Basic scanpy preprocessing pipeline
-- Visualization and quality control
+- QC filtering (mito %, min genes, min cells)
+- Normalization with raw counts preservation
+- Output: analysis-ready h5ad with optional downstream analysis preview
 
 ### `02_stroke_with_cell_metadata.ipynb`
-Demonstrates processing modern GEO datasets:
+Demonstrates compiling modern GEO datasets:
 - Auto-detection of paired count/metadata files
-- Integration of both sample-level and cell-level metadata
-- Preservation of cell type annotations from GEO
-- Selective metadata column inclusion
+- Integration of sample-level and cell-level metadata
+- QC filtering and preprocessing
+- Output: analysis-ready h5ad with cell annotations preserved
 
 ## Running the Examples
 
@@ -55,3 +56,7 @@ Demonstrates processing modern GEO datasets:
 - **GSE225948**: Stroke brain and blood samples with cell type annotations
 
 Both datasets are subsets of the original GEO submissions, containing only a few samples for demonstration purposes.
+
+## Downstream Analysis
+
+After compilation, see [docs/downstream_analysis_guide.md](../docs/downstream_analysis_guide.md) for PCA, UMAP, and clustering.

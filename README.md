@@ -1,18 +1,18 @@
 # scRNA GEO to AnnData Compiler
 
-A Python tool for automated compilation and preprocessing of single-cell RNA-seq datasets downloaded from GEO databases into standardized AnnData objects.
+A Python tool for compiling single-cell RNA-seq datasets from GEO into standardized, analysis-ready AnnData objects.
 
 ## Overview
 
-Processing single-cell RNA-seq data from GEO databases typically involves tedious manual steps: downloading raw files, matching metadata, handling different file formats, and running standard preprocessing pipelines. This tool has helped me automate the workflow, from raw GEO data to analysis-ready AnnData objects.
+Processing single-cell RNA-seq data from GEO typically involves tedious manual steps: downloading raw files, matching metadata, handling different file formats, and running standard preprocessing. This tool automates the workflow from raw GEO data to a QC-filtered, normalized h5ad file ready for interactive analysis.
 
 **Key Features:**
-- **Automated GEO data processing** with flexible file format support
-- **Metadata integration** from CSV/Excel files  
+- **Three data formats**: Simple CSV/TSV, paired count + metadata files, and 10x Cell Ranger MTX
+- **Automatic format detection** from file patterns
+- **QC filtering**: Mitochondrial %, min genes/cell, min cells/gene with configurable thresholds
+- **Raw counts preservation** in `adata.layers['counts']`
+- **Metadata integration** from CSV/Excel files
 - **Memory-efficient handling** of large multi-sample datasets
-- **Parameter optimization** for PCA and clustering analysis
-- **Standardized scanpy workflows** with reproducible results
-- **Configurable preprocessing** pipeline with sensible defaults
 
 ## Quick Start
 
@@ -26,62 +26,38 @@ pip install -r requirements.txt
 
 ### Basic Usage
 
-#### Import Options
-
-If you haven't installed the package, you'll need to add the repository to your Python path:
-
 ```python
 import sys
-sys.path.append('/path/to/scrna-geo-to-anndata')  # Replace with your actual path
-from anndata_compiler import GEOAnndataCompiler, create_config_template
+sys.path.append('/path/to/scrna-geo-to-anndata')
+from anndata_compiler import GEOAnndataCompiler
+
+config = {
+    'raw_data_dir': './GSE123456_RAW',
+    'metadata_file': './metadata.csv',
+    'output_file': './compiled_data.h5ad',
+    'sample_id_column': 'sample_id',
+}
+
+compiler = GEOAnndataCompiler(config)
+adata = compiler.run_full_pipeline()
 ```
 
-Alternatively, install the package in development mode:
+Or install in development mode:
 ```bash
-cd /path/to/scrna-geo-to-anndata
 pip install -e .
 ```
 
-Then you can import directly:
-```python
-from anndata_compiler import GEOAnndataCompiler, create_config_template
+## Pipeline Steps
 
-# Create configuration
-config = {
-    'raw_data_dir': './GSE123456_RAW',           # Path to GEO RAW directory
-    'metadata_file': './metadata.csv',           # Sample metadata file
-    'output_file': './compiled_data.h5ad',       # Output AnnData file
-    'sample_id_column': 'sample_id',             # Column for sample IDs
-    'max_cells_per_sample': 750,                 # Subsample large samples
-    'target_sum': 1e4,                           # Normalization target
-    'n_top_genes': 3000,                         # Highly variable genes
-    'optimize_params': True                      # Auto-optimize parameters
-}
-
-# Initialize and run
-compiler = GEOAnndataCompiler(config)
-adata = compiler.run_full_pipeline(plot_colors=['leiden', 'sample_id'])
-```
-
-## Metadata Format
-
-The tool expects metadata in CSV or Excel format with sample information. Here's an example structure:
-
-| Column | Description | Example |
-|--------|-------------|---------|
-| `Sample_name` | Full sample name from GEO | "GSM123_Sample1" |
-| `Sample_geo_accession` | GEO accession number | "GSM123456" |
-| `Source` | Sample source/tissue | "brain" |
-| `Organism` | Species | "Homo sapiens" |
-| `Disease_state` | Condition/treatment | "control", "disease" |
-| `Sample_ID` | Unique sample identifier | "Sample1" |
-
-**Note:** The `Sample_ID` column should match the sample IDs extracted from your filename format. You can customize the `sample_id_column` parameter to use a different column name.
-
-**Getting metadata from GEO:**
-1. Download sample metadata from your GEO series page
-2. Convert to CSV format with the required columns
-3. Ensure `Sample_ID` matches your filename pattern
+1. **Sample Processing**: Load and parse individual sample files (CSV/TSV, paired metadata, or 10x MTX)
+2. **Metadata Integration**: Match samples with metadata annotations
+3. **Data Merging**: Combine samples into unified AnnData object
+4. **QC Metrics**: Calculate genes/cell, counts/cell, mitochondrial %
+5. **QC Filtering**: Remove low-quality cells and rarely-expressed genes
+6. **Raw Counts Preservation**: Store in `adata.layers['counts']`
+7. **Normalization**: CPM (target_sum=10k) + log1p
+8. **Feature Selection**: Flag highly variable genes (all genes retained)
+9. **Output**: Save analysis-ready h5ad file
 
 ## Configuration Options
 
@@ -91,32 +67,24 @@ The tool expects metadata in CSV or Excel format with sample information. Here's
 | `metadata_file` | CSV/Excel file with sample metadata | Required |
 | `output_file` | Output h5ad file path | Required |
 | `sample_id_column` | Column name for sample IDs in metadata | Required |
-| `max_cells_per_sample` | Maximum cells to sample per file | 750 |
-| `target_sum` | Normalization target sum | 10,000 |
-| `n_top_genes` | Number of highly variable genes | 3,000 |
-| `delimiter` | File delimiter ('whitespace' or character) | 'whitespace' |
-| `random_state` | Random seed for reproducibility | 42 |
-| `optimize_params` | Auto-optimize PCA/clustering parameters | False |
-| `data_format` | Data format: 'auto', 'simple', 'with_cell_metadata' | 'auto' |
-| `counts_pattern` | Glob pattern for count files (e.g., '*_counts.csv.gz') | None |
-| `cell_metadata_pattern` | Glob pattern for cell metadata files | None |
-| `metadata_columns` | List of metadata columns to include (None = all) | None |
-
-## Pipeline Steps
-
-1. **Sample Processing**: Load and parse individual sample files
-2. **Metadata Integration**: Match samples with metadata and annotations  
-3. **Data Merging**: Combine samples into unified AnnData object
-4. **Quality Control**: Calculate standard QC metrics
-5. **Normalization**: Library size normalization and log transformation
-6. **Feature Selection**: Identify highly variable genes
-7. **Dimensionality Reduction**: PCA with optional parameter optimization
-8. **Clustering**: Leiden clustering and UMAP visualization
-9. **Output**: Save processed data and generate plots
+| `data_format` | `'auto'`, `'simple'`, `'with_cell_metadata'`, `'10x_mtx'` | `'auto'` |
+| `max_cells_per_sample` | Maximum cells per sample (`None` = keep all) | `None` |
+| `target_sum` | Normalization target sum | `10000` |
+| `n_top_genes` | Number of highly variable genes | `3000` |
+| `min_genes` | Min genes per cell (QC filter) | `200` |
+| `min_cells` | Min cells per gene (QC filter) | `3` |
+| `max_mito_pct` | Max mitochondrial % (QC filter) | `20.0` |
+| `mito_prefix` | Mitochondrial gene prefix (`'MT-'` human, `'mt-'` mouse) | `'MT-'` |
+| `delimiter` | File delimiter for CSV/TSV formats | `'whitespace'` |
+| `random_state` | Random seed | `42` |
+| `counts_pattern` | Glob pattern for count files | `None` (auto) |
+| `cell_metadata_pattern` | Glob pattern for cell metadata files | `None` (auto) |
+| `metadata_columns` | List of metadata columns to include (`None` = all) | `None` |
 
 ## Data Format Examples
 
 ### Simple Format (Traditional GEO)
+
 Single expression file per sample:
 ```python
 config = {
@@ -124,86 +92,89 @@ config = {
     'metadata_file': './metadata.csv',
     'output_file': './compiled_data.h5ad',
     'sample_id_column': 'Sample_ID',
-    'data_format': 'simple'  # Optional, will auto-detect
+    'data_format': 'simple',
 }
 ```
 
-### With Cell Metadata 
+### With Cell Metadata
+
 Paired count and cell metadata files per sample:
 ```python
 config = {
     'raw_data_dir': './GSE225948_RAW',
-    'metadata_file': './sample_metadata.csv',  # Sample-level metadata
+    'metadata_file': './sample_metadata.csv',
     'output_file': './compiled_with_cells.h5ad',
     'sample_id_column': 'Sample_ID',
-    'data_format': 'with_cell_metadata',  # Optional, will auto-detect
-    'counts_pattern': '*_counts.csv.gz',  # Optional, will auto-detect
-    'cell_metadata_pattern': '*_metadata.csv.gz',  # Optional, will auto-detect
-    'delimiter': ','  # CSV format
+    'data_format': 'with_cell_metadata',
+    'delimiter': ',',
 }
 ```
 
-The tool will automatically detect which format your data uses and process accordingly. Cell-level metadata (cell types, QC metrics) will be preserved in the final AnnData object.
+### 10x Cell Ranger MTX Format
 
-### Selective Metadata Columns
-Choose specific columns from your metadata file to include:
+Cell Ranger output with matrix.mtx + barcodes.tsv + features.tsv:
 ```python
 config = {
-    'raw_data_dir': './GSE225948_RAW',
+    'raw_data_dir': './GSE288856_RAW',   # Subdirectories or prefixed files
     'metadata_file': './metadata.csv',
-    'output_file': './compiled_selective.h5ad',
-    'sample_id_column': 'Sample_ID',
-    'metadata_columns': ['Sex', 'Age', 'Disease_state'],  # Only include these columns
-    'delimiter': ','
+    'output_file': './compiled_10x.h5ad',
+    'sample_id_column': 'sample_id',
+    'data_format': '10x_mtx',
 }
 ```
-This helps keep your AnnData object smaller by excluding unnecessary metadata columns.
 
-## Advanced Features
+Supports two common GEO layouts:
+- **Subdirectory**: Each sample in its own folder (e.g., `sample1/matrix.mtx.gz`)
+- **Prefixed files**: Flat directory with sample-prefixed files (e.g., `GSM123_sample1.matrix.mtx.gz`)
 
-### Custom Sample ID Extraction
+## Metadata Format
 
-Override the `extract_sample_id` method for custom filename parsing:
+The tool expects metadata in CSV or Excel format. Example:
+
+| Sample_ID | Disease_state | Tissue | Age | Sex |
+|-----------|--------------|--------|-----|-----|
+| Sample1 | control | brain | 65 | M |
+| Sample2 | disease | brain | 72 | F |
+
+The `sample_id_column` should match sample IDs extracted from filenames. You can customize extraction by subclassing:
 
 ```python
 class CustomCompiler(GEOAnndataCompiler):
     def extract_sample_id(self, filename):
-        # Custom logic for your filename format
-        return filename.split('_')[1]  # Example: use second part
+        return filename.split('_')[1]  # Custom logic
 ```
 
-### Parameter Optimization
+## Output Format
 
-When `optimize_params=True`, the tool automatically:
-- Determines optimal number of PCs (targeting 80-90% variance explained)
-- Optimizes neighbor count for clustering using elbow method
-- Caps parameters to prevent overfitting with small datasets
+The compiled h5ad contains:
+- `adata.X` — Normalized, log-transformed expression
+- `adata.layers['counts']` — Raw integer counts
+- `adata.var['highly_variable']` — HVG boolean flag
+- `adata.var['mt']` — Mitochondrial gene flag
+- `adata.obs` — All metadata + QC metrics (`n_genes_by_counts`, `total_counts`, `pct_counts_mt`)
 
-### Memory Management
+## Downstream Analysis
 
-For large datasets, the tool includes:
-- Automatic garbage collection between processing steps
-- Data type optimization to reduce memory usage
-- Progress tracking with informative logging
+The compiled h5ad is ready for interactive analysis (PCA, UMAP, Leiden clustering). See **[Downstream Analysis Guide](docs/downstream_analysis_guide.md)** for a step-by-step walkthrough covering:
+
+- QC visualization
+- PCA and scree plot inspection
+- Choosing neighbors and PCs
+- Leiden clustering at multiple resolutions
+- Evaluating clusters with marker genes
 
 ## Requirements
 
-- Python ≥ 3.11
-- pandas ≥ 2.3.0
-- numpy ≥ 1.23.0  
-- anndata ≥ 0.11.0
-- scanpy ≥ 1.11.0
-- scikit-learn ≥ 1.7.0
-- matplotlib ≥ 3.10.0
-- seaborn ≥ 0.12.0
-- leidenalg ≥ 0.10.0 (for Leiden clustering)
-- igraph ≥ 0.11.0 (for network analysis)
-- tqdm ≥ 4.66.0
-- openpyxl ≥ 3.0.9
-
-For running examples:
-- jupyter ≥ 1.0.0
-- ipykernel ≥ 6.0.0
+- Python >= 3.9
+- anndata >= 0.11.0
+- scanpy >= 1.11.0
+- pandas >= 2.3.0
+- numpy >= 1.23.0
+- scipy >= 1.10.0
+- matplotlib >= 3.10.0
+- tqdm >= 4.66.0
+- leidenalg >= 0.10.0 (for downstream clustering)
+- openpyxl >= 3.0.9
 
 ## License
 
@@ -211,4 +182,4 @@ MIT License - see LICENSE file for details.
 
 ## Contributing
 
-Issues, pull requests and feedback welcome! 
+Issues, pull requests and feedback welcome!
