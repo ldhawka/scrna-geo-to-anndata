@@ -21,9 +21,11 @@ class GEOAnndataCompiler:
     - 'with_cell_metadata': Paired count + cell metadata files per sample
     - '10x_mtx': Cell Ranger MTX format (matrix.mtx + barcodes.tsv + features.tsv)
 
-    The pipeline stops after QC filtering, normalization, and HVG detection.
-    Downstream analysis (PCA, UMAP, Leiden) should be performed interactively.
-    See docs/downstream_analysis_guide.md.
+    The pipeline stops after doublet detection, QC filtering, normalization,
+    and HVG detection. Scaling, PCA, Harmony batch integration and clustering
+    live in `anndata_compiler.integration`; cluster annotation lives in
+    `anndata_compiler.annotation`. See docs/downstream_analysis_guide.md and
+    docs/annotation_guide.md, or run the numbered scripts in `pipeline/`.
     """
 
     def __init__(self, config):
@@ -43,10 +45,14 @@ class GEOAnndataCompiler:
             delimiter: file delimiter for CSV/TSV formats (default: 'whitespace')
             random_state: seed (default: 42)
             data_format: 'auto', 'simple', 'with_cell_metadata', '10x_mtx' (default: 'auto')
-            min_genes: min genes per cell for QC filtering (default: 200)
+            min_genes: min genes per cell for QC filtering (default: 500)
+            max_genes: max genes per cell, upper bound (default: 5000; None = no cap)
             min_cells: min cells per gene for QC filtering (default: 3)
-            max_mito_pct: max mitochondrial % for QC filtering (default: 20.0)
+            max_mito_pct: max mitochondrial % for QC filtering (default: 15.0)
             mito_prefix: mitochondrial gene prefix (default: 'MT-' for human, 'mt-' for mouse)
+            detect_doublets: run Scrublet per sample (default: True)
+            expected_doublet_rate: Scrublet expected rate (default: 0.06)
+            filter_doublets: drop predicted doublets rather than only flagging (default: False)
             counts_pattern: glob for count files (default: None, auto-detect)
             cell_metadata_pattern: glob for cell metadata files (default: None)
             metadata_columns: list of metadata columns to include (default: None = all)
@@ -69,10 +75,16 @@ class GEOAnndataCompiler:
         self.config.setdefault('metadata_columns', None)
 
         # QC filtering thresholds
-        self.config.setdefault('min_genes', 200)
+        self.config.setdefault('min_genes', 500)
+        self.config.setdefault('max_genes', 5000)
         self.config.setdefault('min_cells', 3)
-        self.config.setdefault('max_mito_pct', 20.0)
+        self.config.setdefault('max_mito_pct', 15.0)
         self.config.setdefault('mito_prefix', 'MT-')
+
+        # Doublet detection (Scrublet, run per sample before merging)
+        self.config.setdefault('detect_doublets', True)
+        self.config.setdefault('expected_doublet_rate', 0.06)
+        self.config.setdefault('filter_doublets', False)
 
         # Set random seeds
         random.seed(self.config['random_state'])
@@ -186,6 +198,12 @@ class GEOAnndataCompiler:
 
     def create_anndata(self, data, metadata):
         """Create AnnData object with metadata."""
+        # The simple-format reader transposes and re-headers the frame, which
+        # leaves it object-dtype. Scrublet and scanpy both need numeric.
+        if data.dtypes.apply(lambda d: d == object).any():
+            data = data.apply(pd.to_numeric, errors='coerce').fillna(0)
+        data = data.astype(np.float32)
+
         adata = sc.AnnData(data)
         for key, value in metadata.items():
             adata.obs[key] = value
@@ -450,7 +468,63 @@ class GEOAnndataCompiler:
                     continue
 
         print(f"Successfully processed {processed_count} samples")
+
+        if self.config['detect_doublets']:
+            self.detect_doublets_per_sample()
+
         return self.adata_list
+
+    def detect_doublets_per_sample(self):
+        """
+        Run Scrublet on each sample separately, on raw counts, before merging.
+
+        Doublets are a within-library artifact: two cells captured in one droplet.
+        Running Scrublet on a merged object would let the simulated-doublet
+        neighbourhood be built from cells that were never in the same reaction,
+        so it is run per sample and the scores are concatenated afterwards.
+
+        Adds to each sample's `.obs`:
+            doublet_score      — Scrublet score (higher = more doublet-like)
+            predicted_doublet  — boolean call at Scrublet's automatic threshold
+
+        Cells are flagged, not dropped, unless config['filter_doublets'] is True.
+        Clusters that turn out to be doublets are usually easier to spot after
+        clustering (see docs/annotation_guide.md), which is why the default is
+        to flag and decide later.
+        """
+        rate = self.config['expected_doublet_rate']
+        seed = self.config['random_state']
+        print(f"Detecting doublets per sample (Scrublet, expected_doublet_rate={rate})...")
+
+        # Sample identity lives under 'sample_id' for the 10x readers and under
+        # the user's metadata column for the others.
+        id_cols = ['sample_id', self.config['sample_id_column']]
+
+        total_flagged = 0
+        for adata in tqdm(self.adata_list, desc="Scrublet"):
+            sample_id = 'unknown'
+            for col in id_cols:
+                if col in adata.obs.columns and adata.n_obs > 0:
+                    sample_id = str(adata.obs[col].iloc[0])
+                    break
+            try:
+                sc.pp.scrublet(
+                    adata,
+                    expected_doublet_rate=rate,
+                    random_state=seed,
+                )
+                n_flagged = int(adata.obs['predicted_doublet'].sum())
+                total_flagged += n_flagged
+            except Exception as e:
+                # Scrublet fails on very small or very low-complexity samples.
+                # Record NaN/False rather than losing the sample.
+                print(f"  WARNING: Scrublet failed for {sample_id} ({e}); "
+                      f"marking cells as non-doublet.")
+                adata.obs['doublet_score'] = np.nan
+                adata.obs['predicted_doublet'] = False
+
+        print(f"  Flagged {total_flagged:,} predicted doublets across "
+              f"{len(self.adata_list)} samples")
 
     def merge_datasets(self):
         """Merge all AnnData objects into one."""
@@ -483,10 +557,11 @@ class GEOAnndataCompiler:
 
         Steps:
             1. Calculate QC metrics (including mitochondrial %)
-            2. Filter cells and genes by QC thresholds
-            3. Store raw counts in adata.layers['counts']
-            4. Normalize (CPM to target_sum + log1p)
-            5. Detect highly variable genes (flagged, not subsetted)
+            2. Filter cells and genes by QC thresholds (min/max genes, mito %)
+            3. Optionally drop Scrublet-predicted doublets
+            4. Store raw counts in adata.layers['counts']
+            5. Normalize (CPM to target_sum + log1p)
+            6. Detect highly variable genes (flagged, not subsetted)
 
         Returns:
             Preprocessed AnnData with raw counts in layers['counts'].
@@ -511,11 +586,17 @@ class GEOAnndataCompiler:
 
         # Step 2: QC filtering
         min_genes = self.config['min_genes']
+        max_genes = self.config['max_genes']
         min_cells = self.config['min_cells']
         max_mito_pct = self.config['max_mito_pct']
 
         sc.pp.filter_cells(adata, min_genes=min_genes)
         print(f"  Filtered cells by min_genes={min_genes}: {n_cells_before:,} -> {adata.n_obs:,}")
+
+        if max_genes is not None:
+            n_before_max = adata.n_obs
+            adata = adata[adata.obs['n_genes_by_counts'] < max_genes].copy()
+            print(f"  Filtered cells by max_genes={max_genes}: {n_before_max:,} -> {adata.n_obs:,}")
 
         sc.pp.filter_genes(adata, min_cells=min_cells)
         print(f"  Filtered genes by min_cells={min_cells}: {n_genes_before:,} -> {adata.n_vars:,}")
@@ -524,14 +605,25 @@ class GEOAnndataCompiler:
         adata = adata[adata.obs['pct_counts_mt'] < max_mito_pct].copy()
         print(f"  Filtered cells by max_mito_pct={max_mito_pct}%: {n_before_mito:,} -> {adata.n_obs:,}")
 
-        # Step 3: Preserve raw counts
+        # Step 3: Doublets — flagged by default, dropped only on request
+        if 'predicted_doublet' in adata.obs.columns:
+            n_doublets = int(adata.obs['predicted_doublet'].sum())
+            if self.config['filter_doublets']:
+                n_before_dbl = adata.n_obs
+                adata = adata[~adata.obs['predicted_doublet'].astype(bool)].copy()
+                print(f"  Removed Scrublet doublets: {n_before_dbl:,} -> {adata.n_obs:,}")
+            else:
+                print(f"  Retained {n_doublets:,} flagged doublets "
+                      f"(set filter_doublets=True to drop them)")
+
+        # Step 4: Preserve raw counts
         adata.layers['counts'] = adata.X.copy()
 
-        # Step 4: Normalize
+        # Step 5: Normalize
         sc.pp.normalize_total(adata, target_sum=self.config['target_sum'])
         sc.pp.log1p(adata)
 
-        # Step 5: HVG detection (flag only, keep all genes)
+        # Step 6: HVG detection (flag only, keep all genes)
         sc.pp.highly_variable_genes(
             adata, flavor='seurat',
             n_top_genes=self.config['n_top_genes'],
@@ -610,10 +702,16 @@ def create_config_template():
         'n_top_genes': 3000,
 
         # QC filtering
-        'min_genes': 200,                # Min genes per cell
+        'min_genes': 500,                # Min genes per cell
+        'max_genes': 5000,               # Max genes per cell (None = no cap)
         'min_cells': 3,                  # Min cells per gene
-        'max_mito_pct': 20.0,            # Max mitochondrial %
+        'max_mito_pct': 15.0,            # Max mitochondrial %
         'mito_prefix': 'MT-',            # 'MT-' for human, 'mt-' for mouse
+
+        # Doublet detection (Scrublet, per sample)
+        'detect_doublets': True,
+        'expected_doublet_rate': 0.06,
+        'filter_doublets': False,        # False = flag only; decide after clustering
 
         # File parsing
         'delimiter': 'whitespace',
@@ -632,9 +730,6 @@ if __name__ == "__main__":
         'metadata_file': './GSE244263_metadata.csv',
         'output_file': './compiled_data.h5ad',
         'sample_id_column': 'Sample_ID',
-        'min_genes': 200,
-        'min_cells': 3,
-        'max_mito_pct': 20.0,
     }
 
     compiler = GEOAnndataCompiler(config)

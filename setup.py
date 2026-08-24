@@ -8,10 +8,10 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="scrna-geo-to-anndata",
-    version="0.2.0",
+    version="0.3.0",
     author="Luvna Dhawka",
     author_email="ldhawka@unc.edu",  
-    description="A Python tool for compiling and preprocessing single-cell RNA-seq data from GEO databases into AnnData objects",
+    description="Compile, integrate, cluster and annotate single-cell RNA-seq data from GEO into AnnData objects",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/ldhawka/scrna-geo-to-anndata",
@@ -29,5 +29,5 @@ setup(
     ],
     python_requires=">=3.9",
     install_requires=requirements,
-    keywords="single-cell, RNA-seq, GEO, bioinformatics, scanpy, anndata",
+    keywords="single-cell, RNA-seq, GEO, bioinformatics, scanpy, anndata, harmony, celltypist, annotation",
 )

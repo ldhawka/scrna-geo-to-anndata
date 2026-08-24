@@ -24,7 +24,8 @@ This directory contains example datasets and Jupyter notebooks demonstrating how
 Demonstrates compiling traditional GEO datasets:
 - Single expression file per sample
 - Sample-level metadata integration
-- QC filtering (mito %, min genes, min cells)
+- QC filtering (mito %, min/max genes, min cells)
+- Per-sample Scrublet doublet detection
 - Normalization with raw counts preservation
 - Output: analysis-ready h5ad with optional downstream analysis preview
 
@@ -57,6 +58,21 @@ Demonstrates compiling modern GEO datasets:
 
 Both datasets are subsets of the original GEO submissions, containing only a few samples for demonstration purposes.
 
+## A note on runtime
+
+The two example datasets are real GEO data, not toy matrices — the simple-format ALS
+files are ~77 MB gzipped dense text, and parsing them takes several minutes per sample.
+That parse is the slow part, not the QC or the doublet detection. Be patient the first
+time, and reuse the compiled h5ad afterwards.
+
 ## Downstream Analysis
 
-After compilation, see [docs/downstream_analysis_guide.md](../docs/downstream_analysis_guide.md) for PCA, UMAP, and clustering.
+After compilation:
+
+- [docs/downstream_analysis_guide.md](../docs/downstream_analysis_guide.md) — PCA,
+  Harmony batch integration, UMAP, and Leiden clustering
+- [docs/annotation_guide.md](../docs/annotation_guide.md) — turning clusters into cell types
+- [pipeline/README.md](../pipeline/README.md) — the same pipeline as numbered CLI steps
+
+Note that the notebooks predate v0.3.0 and cover compilation only; they do not yet
+show the Harmony or annotation steps.
