@@ -638,8 +638,10 @@ class GEOAnndataCompiler:
         return adata
 
     def save_data(self, adata):
-        """Save the processed AnnData object."""
+        """Save the processed AnnData object, creating the output directory if needed."""
         output_file = self.config['output_file']
+        output_dir = os.path.dirname(os.path.abspath(output_file))
+        os.makedirs(output_dir, exist_ok=True)
         print(f"Saving data to {output_file}")
         adata.write(output_file)
 

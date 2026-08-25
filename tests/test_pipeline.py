@@ -14,6 +14,7 @@ import pytest
 import scanpy as sc
 
 from anndata_compiler import (
+    GEOAnndataCompiler,
     PBMC_MARKER_PANEL,
     apply_labels,
     build_annotation_template,
@@ -262,6 +263,25 @@ def test_apply_labels_rejects_unmapped_cluster(clustered, tmp_path):
     t.to_csv(out, index=False)
     with pytest.raises(ValueError, match='absent from template'):
         apply_labels(clustered.copy(), str(out), 'leiden_r1_0')
+
+
+# --- compiler I/O ---------------------------------------------------------
+
+def test_save_data_creates_output_directory(adata, tmp_path):
+    """The documented workflow writes to work/, which may not exist yet."""
+    out = tmp_path / 'work' / 'nested' / 'compiled.h5ad'
+    assert not out.parent.exists()
+
+    compiler = GEOAnndataCompiler({
+        'raw_data_dir': str(tmp_path),
+        'metadata_file': str(tmp_path / 'meta.csv'),
+        'output_file': str(out),
+        'sample_id_column': 'sample_id',
+    })
+    compiler.save_data(adata.copy())
+
+    assert out.exists()
+    assert sc.read_h5ad(str(out)).n_obs == adata.n_obs
 
 
 # --- panels ---------------------------------------------------------------
